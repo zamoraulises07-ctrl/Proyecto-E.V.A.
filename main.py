@@ -17,7 +17,7 @@ else:
     genai.configure(api_key=api_key)
     
     # Inicializar el modelo de Gemini
-   model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-pro")
     
     if "chat" not in st.session_state:
         st.session_state.chat = model.start_chat(history=[])
