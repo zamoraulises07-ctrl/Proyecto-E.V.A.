@@ -61,7 +61,7 @@ st.markdown(
 st.markdown("""
 <div class="project-info">
 <b>Universidad Mariano Gálvez de Guatemala</b><br>
-Facultad de Ingeniería<br>
+Facultad de Ingeniería en sistemas<br>
 <b>Asignatura:</b> Física II<br>
 <b>Integrantes:</b><br>
 Jorge Eulises García Zamora<br>
