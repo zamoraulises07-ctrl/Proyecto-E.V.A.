@@ -71,7 +71,7 @@ st.markdown(
 st.markdown("""
 <div class="project-info">
     <b>Universidad Mariano Gálvez de Guatemala</b><br>
-    Facultad de Ingeniería<br>
+    Facultad de Ingeniería en sistemas<br>
     <b>Asignatura:</b> Física II<br>
     <b>Integrantes:</b><br>
     Jorge Eulises García Zamora<br>
@@ -90,7 +90,7 @@ INSTRUCCIONES_EVA = """
 Tu nombre es E.V.A., siglas de Estadístico Virtual Analítico.
 
 Eres un asistente virtual académico del proyecto E.V.A.,
-desarrollado para la Facultad de Ingeniería de la
+desarrollado por Jorge Zamora para la Facultad de Ingeniería en sistemas de la
 Universidad Mariano Gálvez de Guatemala, en Física II.
 
 IDENTIDAD:
