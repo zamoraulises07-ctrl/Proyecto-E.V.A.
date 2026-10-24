@@ -1,5 +1,5 @@
-
 import os
+import time
 import streamlit as st
 from google import genai
 from google.genai import types
@@ -116,6 +116,11 @@ Cuando un cálculo requiera precisión, muestra el
 procedimiento matemático verificable.
 """
 
+# Modelos en orden de prioridad: si el primero está saturado,
+# se intenta con el siguiente.
+MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+MAX_REINTENTOS = 3
+
 # --------------------------------------------------
 # CLAVE API
 # --------------------------------------------------
@@ -133,16 +138,57 @@ if not api_key:
     )
     st.stop()
 
+
 # Crear el cliente una sola vez por sesión de caché
 @st.cache_resource
 def crear_cliente(clave):
     return genai.Client(api_key=clave)
+
 
 try:
     client = crear_cliente(api_key)
 except Exception as e:
     st.error(f"No se pudo inicializar Gemini: {e}")
     st.stop()
+
+
+# --------------------------------------------------
+# FUNCION DE GENERACION CON REINTENTOS
+# --------------------------------------------------
+def generar_respuesta(historial):
+    """Prueba cada modelo con reintentos y espera creciente."""
+    ultimo_error = RuntimeError("No se obtuvo respuesta")
+
+    for modelo in MODELOS:
+        for intento in range(MAX_REINTENTOS):
+            try:
+                respuesta = client.models.generate_content(
+                    model=modelo,
+                    contents=historial,
+                    config=types.GenerateContentConfig(
+                        system_instruction=INSTRUCCIONES_EVA,
+                        temperature=0.4,
+                        max_output_tokens=2000,
+                    )
+                )
+                if respuesta.text:
+                    return respuesta.text
+                ultimo_error = RuntimeError("Respuesta vacía")
+            except Exception as e:
+                ultimo_error = e
+                mensaje = str(e)
+                # Reintentar solo si es saturación o límite temporal
+                temporal = any(
+                    c in mensaje
+                    for c in ("503", "UNAVAILABLE", "429", "500",
+                              "overloaded", "RESOURCE_EXHAUSTED")
+                )
+                if not temporal:
+                    raise  # error real: clave, modelo inexistente, etc.
+                time.sleep(2 ** intento)  # espera 1s, 2s, 4s
+
+    raise ultimo_error
+
 
 # --------------------------------------------------
 # HISTORIAL DEL CHAT
@@ -192,54 +238,29 @@ if prompt:
     with st.chat_message("user", avatar="🧑‍🎓"):
         st.markdown(prompt)
 
-    # Convertir el historial al formato de Gemini.
     # Gemini utiliza "model" en lugar de "assistant".
-    historial = []
-    for mensaje in st.session_state.messages:
-        historial.append({
-            "role": (
-                "model"
-                if mensaje["role"] == "assistant"
-                else "user"
-            ),
-            "parts": [{"text": mensaje["content"]}]
-        })
+    historial = [
+        {
+            "role": "model" if m["role"] == "assistant" else "user",
+            "parts": [{"text": m["content"]}]
+        }
+        for m in st.session_state.messages
+    ]
 
     with st.chat_message("assistant", avatar="🤖"):
         with st.spinner("E.V.A. está preparando tu respuesta..."):
             try:
-                respuesta = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=historial,
-                    config=types.GenerateContentConfig(
-                        system_instruction=INSTRUCCIONES_EVA,
-                        temperature=0.4,
-                        max_output_tokens=1200,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_level="low"
-                        )
-                    )
-                )
-
-                texto = respuesta.text
-
-                if not texto:
-                    texto = (
-                        "No pude generar una respuesta esta vez. "
-                        "Por favor, intenta de nuevo."
-                    )
-
+                texto = generar_respuesta(historial)
                 st.markdown(texto)
-
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": texto
                 })
-
             except Exception as e:
                 st.error(
-                    "No se pudo generar la respuesta. "
-                    "Comprueba la conexión, el modelo y la cuota de API."
+                    "No se pudo generar la respuesta. Los servidores de "
+                    "Gemini pueden estar saturados; espera unos segundos "
+                    "e intenta de nuevo."
                 )
                 st.caption(f"Detalle técnico: {type(e).__name__}: {e}")
 
