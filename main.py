@@ -19,9 +19,8 @@ else:
 
     # Guardar la instancia del chat en el estado de la sesión (session_state)
     if "chat" not in st.session_state:
-        # Usamos el nombre del modelo estable
         # Inicializar el modelo de Gemini con la nomenclatura estándar
-model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-1.5-flash")
         st.session_state.chat = model.start_chat(history=[])
 
     # Mostrar historial de mensajes guardados previamente
