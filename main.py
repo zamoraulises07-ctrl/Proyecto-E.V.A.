@@ -124,7 +124,7 @@ procedimiento matemático verificable.
 # Modelos en orden de prioridad. Si uno no existe (404) se pasa al
 # siguiente; si está saturado (503) se reintenta con espera creciente.
 MODELOS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"]
-MAX_REINTENTOS = 3
+MAX_REINTENTOS = 2
 
 try:
     api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -171,6 +171,53 @@ def generar_respuesta(historial):
                     return respuesta.text
                 ultimo_error = RuntimeError("Respuesta vacía")
             except Exception as e:
+                ultimo_error = e
+                mensaje = str(e)
+                if "404" in mensaje or "NOT_FOUND" in mensaje:
+                    break
+                temporal = any(
+                    c in mensaje
+                    for c in ("503", "UNAVAILABLE", "429", "500",
+                              "overloaded", "RESOURCE_EXHAUSTED")
+                )
+                if not temporal:
+                    raise
+                time.sleep(2 ** intento)
+    raise ultimo_error
+
+
+def generar_stream(historial):
+    """Genera la respuesta por fragmentos (se muestra mientras se escribe)."""
+    if client is None:
+        raise RuntimeError(
+            "Falta GEMINI_API_KEY en los secretos de la aplicación."
+        )
+    ultimo_error = RuntimeError("No se obtuvo respuesta")
+    for modelo in MODELOS:
+        for intento in range(MAX_REINTENTOS):
+            emitido = False
+            try:
+                flujo = client.models.generate_content_stream(
+                    model=modelo,
+                    contents=historial,
+                    config=types.GenerateContentConfig(
+                        system_instruction=INSTRUCCIONES_EVA,
+                        max_output_tokens=1500,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="low"
+                        )
+                    )
+                )
+                for fragmento in flujo:
+                    if fragmento.text:
+                        emitido = True
+                        yield fragmento.text
+                if emitido:
+                    return
+                ultimo_error = RuntimeError("Respuesta vacía")
+            except Exception as e:
+                if emitido:
+                    raise
                 ultimo_error = e
                 mensaje = str(e)
                 if "404" in mensaje or "NOT_FOUND" in mensaje:
@@ -1164,25 +1211,24 @@ def seccion_chat():
         with st.chat_message("user", avatar="🧑‍🎓"):
             st.markdown(prompt)
 
+        # Solo los últimos mensajes: menos texto = respuesta más rápida
         historial = [
             {"role": "model" if m["role"] == "assistant" else "user",
              "parts": [{"text": m["content"]}]}
-            for m in st.session_state.messages
+            for m in st.session_state.messages[-9:]
         ]
         with st.chat_message("assistant", avatar="🤖"):
-            with st.spinner("E.V.A. está preparando tu respuesta..."):
-                try:
-                    texto = generar_respuesta(historial)
-                    st.markdown(texto)
-                    st.session_state.messages.append(
-                        {"role": "assistant", "content": texto})
-                except Exception as e:
-                    st.error("No se pudo generar la respuesta. Los "
-                             "servidores de Gemini pueden estar "
-                             "saturados; espera unos segundos e "
-                             "intenta de nuevo.")
-                    st.caption(
-                        f"Detalle técnico: {type(e).__name__}: {e}")
+            try:
+                texto = st.write_stream(generar_stream(historial))
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": texto})
+            except Exception as e:
+                st.error("No se pudo generar la respuesta. Los "
+                         "servidores de Gemini pueden estar "
+                         "saturados; espera unos segundos e "
+                         "intenta de nuevo.")
+                st.caption(
+                    f"Detalle técnico: {type(e).__name__}: {e}")
 
 
 # ==================================================
