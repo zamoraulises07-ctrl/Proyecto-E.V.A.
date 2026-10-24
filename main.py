@@ -118,7 +118,7 @@ procedimiento matemático verificable.
 
 # Modelos en orden de prioridad: si el primero está saturado,
 # se intenta con el siguiente.
-MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
+MODELOS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"]
 MAX_REINTENTOS = 3
 
 # --------------------------------------------------
@@ -167,8 +167,10 @@ def generar_respuesta(historial):
                     contents=historial,
                     config=types.GenerateContentConfig(
                         system_instruction=INSTRUCCIONES_EVA,
-                        temperature=0.4,
                         max_output_tokens=2000,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="low"
+                        )
                     )
                 )
                 if respuesta.text:
@@ -177,6 +179,9 @@ def generar_respuesta(historial):
             except Exception as e:
                 ultimo_error = e
                 mensaje = str(e)
+                # Modelo no disponible: pasar al siguiente modelo
+                if "404" in mensaje or "NOT_FOUND" in mensaje:
+                    break
                 # Reintentar solo si es saturación o límite temporal
                 temporal = any(
                     c in mensaje
@@ -184,7 +189,7 @@ def generar_respuesta(historial):
                               "overloaded", "RESOURCE_EXHAUSTED")
                 )
                 if not temporal:
-                    raise  # error real: clave, modelo inexistente, etc.
+                    raise  # error real: clave inválida, etc.
                 time.sleep(2 ** intento)  # espera 1s, 2s, 4s
 
     raise ultimo_error
