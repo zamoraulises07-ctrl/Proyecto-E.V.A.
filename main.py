@@ -125,6 +125,8 @@ procedimiento matemático verificable.
 # siguiente; si está saturado (503) se reintenta con espera creciente.
 MODELOS = ["gemini-3.8-flash", "gemini-3.1-flash-lite"]
 MAX_REINTENTOS = 2
+TIMEOUT_MS = 30000        # si Gemini no responde en 30 s, se corta y se pasa al respaldo
+PRESUPUESTO_S = 75        # tiempo máximo total antes de rendirse
 
 try:
     api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -135,7 +137,14 @@ api_key = api_key or os.getenv("GEMINI_API_KEY", "")
 
 @st.cache_resource
 def crear_cliente(clave):
-    return genai.Client(api_key=clave)
+    # Sin timeout, una conexión colgada puede esperar minutos.
+    try:
+        return genai.Client(
+            api_key=clave,
+            http_options=types.HttpOptions(timeout=TIMEOUT_MS)
+        )
+    except Exception:
+        return genai.Client(api_key=clave)
 
 
 client = None
@@ -186,15 +195,24 @@ def generar_respuesta(historial):
     raise ultimo_error
 
 
-def generar_stream(historial):
-    """Genera la respuesta por fragmentos (se muestra mientras se escribe)."""
+def generar_stream(historial, meta=None):
+    """Genera la respuesta por fragmentos (se muestra mientras se escribe).
+
+    - Si un modelo se cuelga (timeout) pasa de inmediato al siguiente.
+    - Si está saturado (503/429) reintenta con espera corta.
+    - `meta` (dict opcional) recibe el modelo usado y el tiempo hasta la
+      primera palabra, para poder medir la latencia.
+    """
     if client is None:
         raise RuntimeError(
             "Falta GEMINI_API_KEY en los secretos de la aplicación."
         )
     ultimo_error = RuntimeError("No se obtuvo respuesta")
+    inicio = time.perf_counter()
     for modelo in MODELOS:
         for intento in range(MAX_REINTENTOS):
+            if time.perf_counter() - inicio > PRESUPUESTO_S:
+                raise ultimo_error
             emitido = False
             try:
                 flujo = client.models.generate_content_stream(
@@ -210,6 +228,10 @@ def generar_stream(historial):
                 )
                 for fragmento in flujo:
                     if fragmento.text:
+                        if not emitido and meta is not None:
+                            meta["modelo"] = modelo
+                            meta["primer_token"] = (
+                                time.perf_counter() - inicio)
                         emitido = True
                         yield fragmento.text
                 if emitido:
@@ -220,7 +242,12 @@ def generar_stream(historial):
                     raise
                 ultimo_error = e
                 mensaje = str(e)
+                detalle = (type(e).__name__ + " " + mensaje).lower()
                 if "404" in mensaje or "NOT_FOUND" in mensaje:
+                    break
+                # Modelo lento o colgado: no insistir, probar el siguiente
+                if any(c in detalle for c in ("timeout", "timed out",
+                                              "deadline", "504")):
                     break
                 temporal = any(
                     c in mensaje
@@ -1203,6 +1230,8 @@ def seccion_chat():
         avatar = "🤖" if mensaje["role"] == "assistant" else "🧑‍🎓"
         with st.chat_message(mensaje["role"], avatar=avatar):
             st.markdown(mensaje["content"])
+            if mensaje.get("info"):
+                st.caption(mensaje["info"])
 
     prompt = st.chat_input("Escribe tu pregunta para E.V.A....")
     if prompt:
@@ -1219,9 +1248,18 @@ def seccion_chat():
         ]
         with st.chat_message("assistant", avatar="🤖"):
             try:
-                texto = st.write_stream(generar_stream(historial))
+                meta = {}
+                t0 = time.perf_counter()
+                texto = st.write_stream(generar_stream(historial, meta))
+                info = ""
+                if meta:
+                    info = (f"⏱ {meta['modelo']} · primera palabra en "
+                            f"{meta['primer_token']:.1f} s · total "
+                            f"{time.perf_counter() - t0:.1f} s")
+                    st.caption(info)
                 st.session_state.messages.append(
-                    {"role": "assistant", "content": texto})
+                    {"role": "assistant", "content": texto,
+                     "info": info})
             except Exception as e:
                 st.error("No se pudo generar la respuesta. Los "
                          "servidores de Gemini pueden estar "
